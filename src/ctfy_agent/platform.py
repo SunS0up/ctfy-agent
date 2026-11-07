@@ -116,15 +116,39 @@ class CtfyPlatform:
         self.tools: list[dict] = []
         self._by_name: dict[str, dict] = {}
         self._resolved: dict[str, str] = {}
+        self._connected = False
 
     # ---------- 连接 ----------
 
-    def connect(self) -> dict:
+    def connect(self, *, lazy: bool = False) -> dict:
+        """建立 MCP 会话。
+
+        `lazy=True` 只做 initialize、跳过 tools/list：容器里 tools/list 走 SSE，
+        实测能拖 60s+（读循环不受单次超时约束），而 engagement 只用得到
+        save_report / finalize_report 这类按名字直接调的工具，不需要清单。
+        """
         result = self.client.initialize()
+        self._connected = True
+        if lazy:
+            self.tools = []
+            self._by_name = {}
+            self._resolved.clear()
+            return result or {}
         self.tools = self.client.list_tools()
         self._by_name = {tool.get("name") or "": tool for tool in self.tools}
         self._resolved.clear()
         return result or {}
+
+    def ensure_connected(self, *, budget: float = 20.0) -> bool:
+        """会话丢了（或当初 lazy 建的）就补一次 initialize，返回是否可用。"""
+        if self._connected:
+            return True
+        try:
+            self.client.timeout = max(3.0, float(budget))
+            self.connect(lazy=True)
+            return True
+        except Exception:  # noqa: BLE001 - 提交时再试一次，失败由调用方记录
+            return False
 
     @property
     def server_info(self) -> dict:

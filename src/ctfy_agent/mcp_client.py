@@ -142,13 +142,16 @@ class McpHttpClient:
             headers["Mcp-Session-Id"] = self.session_id
         return headers
 
-    def _post(self, payload: dict, expect_response: bool = True):
+    def _post(self, payload: dict, expect_response: bool = True, timeout: float | None = None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(self.url, data=body, headers=self._headers(), method="POST")
         self._debug(f"→ {payload.get('method')} id={payload.get('id')} session={self.session_id}")
+        # 单次请求的 socket 超时：它同时约束之后在这个 socket 上的每次 recv，
+        # 所以「通知 initialized」这种没人回的请求必须用更短的值，否则白等 15s。
+        budget = self.timeout if timeout is None else max(1.0, float(timeout))
 
         try:
-            response = self._opener.open(request, timeout=self.timeout)
+            response = self._opener.open(request, timeout=budget)
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
@@ -170,7 +173,7 @@ class McpHttpClient:
         except (TimeoutError, socket.timeout):
             # 读超时不是 URLError（实测从 getresponse() 直接抛 TimeoutError）：
             # 不兜住会让整条 agent 崩掉——容器里等于不写 result.json = 0 分。
-            raise McpError(f"MCP 响应超时（{self.timeout:.0f}s）：{self.url}", retryable=True) from None
+            raise McpError(f"MCP 响应超时（{budget:.0f}s）：{self.url}", retryable=True) from None
 
         new_session = response.headers.get("Mcp-Session-Id")
         if new_session:
@@ -194,7 +197,7 @@ class McpHttpClient:
                     f"响应不是 JSON（Content-Type={content_type or 'none'}）：{raw[:200]!r}"
                 ) from None
         except (TimeoutError, socket.timeout):
-            raise McpError(f"响应体读取超时（{self.timeout:.0f}s）：{self.url}", retryable=True) from None
+            raise McpError(f"响应体读取超时（{budget:.0f}s）：{self.url}", retryable=True) from None
         finally:
             response.close()
 
@@ -270,12 +273,14 @@ class McpHttpClient:
             raise McpError(f"{method}: JSON-RPC 错误 {error.get('code')}: {error.get('message')}")
         return message.get("result")
 
-    def notify(self, method: str, params=None) -> None:
+    def notify(self, method: str, params=None, *, timeout: float | None = None) -> None:
         payload = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
+        # 默认给 5s：202 Accepted 是常态，等不到响应就该走，别把预算耗在通知上。
+        budget = min(self.timeout, 5.0) if timeout is None else timeout
         try:
-            self._post(payload, expect_response=False)
+            self._post(payload, expect_response=False, timeout=budget)
         except McpError as exc:
             # 通知失败不致命：多数服务端对 initialized 只回 202
             print(f"[warn] 通知 {method} 发送失败：{exc}", file=sys.stderr)

@@ -42,6 +42,7 @@ DEFAULT_MAX_TOKENS = 8192       # 4096 会在 thinking 块截断、一步即「�
 DEFAULT_MAX_CONTEXT = 16000
 DEFAULT_MAX_TOKENS_PER_CHALLENGE = 800000
 MCP_CONNECT_TIMEOUT = 15.0      # MCP 握手/建连的单次预算：平台的整轮时限只有两三分钟
+MCP_CONNECT_BUDGET = 30.0       # 单次候选的墙钟硬上限（SSE 读循环不受 socket 超时约束）
 
 _RESULT_PATH: Path | None = None
 _CHALLENGE_ID = ""
@@ -52,6 +53,29 @@ _CHALLENGE_ID = ""
 
 def _log(message: str) -> None:
     print(message, file=sys.stderr)
+
+
+def _with_deadline(seconds: float, label: str, fn):
+    """给一段可能卡住的网络调用加墙钟硬上限。
+
+    urllib 的 timeout 只约束单次 connect/recv；MCP 的 SSE 响应是逐行读的循环，
+    慢速滴流能让一次 tools/list 拖到 60s+（实测 67s），把平台给的两三分钟吃光。
+    这里用 SIGALRM 兜底：到点抛 TimeoutError，调用方按「这条候选不可用」处理。
+    """
+    if not hasattr(signal, "setitimer"):
+        return fn()  # Windows 本地调试：没有 itimer，退化为无硬上限
+    previous = signal.getsignal(signal.SIGALRM)
+
+    def _boom(signum, frame):  # noqa: ARG001 - 签名由 signal 决定
+        raise TimeoutError(f"{label} 超过 {seconds:.0f}s 硬上限")
+
+    signal.signal(signal.SIGALRM, _boom)
+    signal.setitimer(signal.ITIMER_REAL, max(1.0, float(seconds)))
+    try:
+        return fn()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def _load_json(path: Path) -> dict | None:
@@ -522,24 +546,26 @@ def run_agent(
     #    一个 120s 的 MCP 读超时就会把全部预算耗在「还没开始解题」上。
     if platform is None:
         last_err = None
+        # engagement 跳过 tools/list（SSE 慢读实测 60s+），只 initialize 就够提交报告
+        lazy = run_mode == "engagement"
         for candidate in candidates:
             try:
                 ips = sorted({info[4][0] for info in socket.getaddrinfo(_host_of(candidate), 443, 0, socket.SOCK_STREAM)})
             except Exception as exc:  # noqa: BLE001 - DNS 失败只做记录
                 ips = [f"dns-fail:{exc}"]
-            _log(f"[mcp] 连接 {candidate} 解析={ips}（预算 {MCP_CONNECT_TIMEOUT:.0f}s）")
+            _log(f"[mcp] 连接 {candidate} 解析={ips}（socket {MCP_CONNECT_TIMEOUT:.0f}s / 硬上限 {MCP_CONNECT_BUDGET:.0f}s）")
             started = time.time()
             probe = CtfyPlatform(candidate, token, timeout=MCP_CONNECT_TIMEOUT)
             try:
-                probe.connect()
+                _with_deadline(MCP_CONNECT_BUDGET, f"连接 {candidate}", lambda: probe.connect(lazy=lazy))
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
                 _log(f"[mcp] 失败 {candidate}（{time.time() - started:.1f}s）: {exc}")
                 continue
             platform = probe
-            _log(f"[mcp] 已连接（{time.time() - started:.1f}s），工具 {len(getattr(probe, 'tools', []) or [])} 个")
+            _log(f"[mcp] 已连接（{time.time() - started:.1f}s，lazy={lazy}）")
             break
-        if platform is None:
+        if platform is None and run_mode != "engagement":
             _write_rollup(
                 result_path,
                 _rollup(challenge_id=challenge_id, stop_reason="halted",
@@ -547,6 +573,11 @@ def run_agent(
                 announce=True,
             )
             return 0
+        if platform is None:
+            # 侦察只用本地 HTTP 工具，不需要 MCP：先跑起来，交卷前再补一次连接。
+            # 这样即使控制面抽风，也还有一份报告落盘（写进 result.json 的 writeup）。
+            _log(f"[mcp] 全部候选失败，engagement 改为离线侦察，交卷前重试：{last_err}")
+            platform = CtfyPlatform(candidates[0], token, timeout=MCP_CONNECT_TIMEOUT)
 
     # 7) state + 题面入库
     try:

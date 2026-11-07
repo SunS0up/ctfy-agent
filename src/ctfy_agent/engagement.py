@@ -194,6 +194,10 @@ class EngagementRunner:
             "challenge_id": self._challenge_id,
             "content": content,
         }
+        # 建连阶段失败时平台对象是「未连上」的状态：交卷前补一次，成功就直接用。
+        ensure = getattr(self.platform, "ensure_connected", None)
+        if ensure is not None and not ensure(budget=20.0):
+            _log("[engagement] 交卷前仍连不上 MCP，报告只留在 result.json")
         try:
             saved = self.platform.call_raw("save_report", payload)
         except Exception as exc:  # noqa: BLE001 - 提交失败也要把报告留在 result.json
@@ -238,10 +242,11 @@ class EngagementRunner:
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
         reason = "done"
         nudged = False
-        # 墙钟硬闸：平台的解题窗口约 2.5 分钟，到点必须自己收尾，不能让进程被 SIGTERM 杀掉
+        # 墙钟硬闸：平台的解题窗口约 2.5 分钟（实测 2:24 被 SIGTERM），而且 MCP 建连
+        # 已经先花掉一截；把侦察压到 70s，剩下的留给 save_report/finalize_report。
         t0 = time.time()
         recovered_400 = False
-        deadline = float(os.environ.get("AGENT_ENGAGEMENT_DEADLINE") or 100.0)
+        deadline = float(os.environ.get("AGENT_ENGAGEMENT_DEADLINE") or 70.0)
         _log(
             f"[engagement] start {challenge_id} max_calls={max_calls} deadline={deadline:.0f}s "
             f"tools={len(specs)} scope={scope[:2]} endpoints={[e.get('url') for e in endpoints][:2]}"
