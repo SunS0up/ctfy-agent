@@ -140,7 +140,7 @@ def push(tok: str, owner: str) -> None:
 def _repo_files() -> list:
     """工作区里要进仓库的文件（跳过 .git / 缓存 / 本地产物）。"""
     skip_dirs = {".git", "__pycache__", "dist", ".tools", "runs", "logs", ".venv", "venv",
-                 "misc-bank", ".ref", ".workbuddy", "inbox"}
+                 "misc-bank", ".ref", ".workbuddy", "inbox", ".local-run"}
     files = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs)

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from typing import Any, Callable
@@ -229,18 +230,31 @@ class EngagementRunner:
         ]
 
         max_calls = int(getattr(self.config, "max_llm_calls", 0) or 80)
+        # 平台给一次测评的墙钟时间很短（实测 GAUNTLET 免费样例解题阶段约 2.5 分钟就 SIGTERM），
+        # 80 轮根本跑不完；默认压到 12 轮，够 3–4 次侦察 + 1 次收尾。
+        cap = int(os.environ.get("AGENT_ENGAGEMENT_MAX_CALLS") or 12)
+        max_calls = max(2, min(max_calls, cap))
         calls = 0
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
         reason = "done"
         nudged = False
+        _log(
+            f"[engagement] start {challenge_id} max_calls={max_calls} tools={len(specs)} "
+            f"scope={scope[:2]} endpoints={[e.get('url') for e in endpoints][:2]}"
+        )
 
         while calls < max_calls and not self.submitted:
+            started = time.time()
             try:
                 resp = llm.chat(messages, tools=specs)
             except LLMError as exc:
                 reason = "llm_error"
-                _log(f"[engagement] LLM error: {exc}")
+                _log(f"[engagement] LLM error after {time.time() - started:.1f}s: {exc}")
                 break
+            _log(
+                f"[engagement] #{calls + 1} {time.time() - started:.1f}s "
+                f"tools={len(resp.get('tool_calls') or [])} usage={(resp.get('usage') or {}).get('total_tokens')}"
+            )
             calls += 1
             for key in usage:
                 usage[key] += int((resp.get("usage") or {}).get(key) or 0)

@@ -42,6 +42,38 @@ writeup="unsupported run_mode='engagement'"
 4. **落盘**：报告正文进 `result.json` 的 `writeup`（截断 6000 字），`solved` 保持空——
    engagement 没有逐题 flag，塞一个假的 `solved` 会让平台记成解题。
 
+## 墙钟预算：比 token 更先耗尽的东西
+
+2026-11-07 第一次带 engagement 的真实测评（v2）暴露了真正的瓶颈：**平台的解题窗口很短**。
+实测时间轴：排队 0:02 → 启动靶场 1:14 → Agent 解题 **2:24 后收到 SIGTERM**，
+`result.json` 写成 `stop_reason=halted / writeup="signal 15"`，模型调用仍是 0。
+
+也就是说：任何「单次调用可能挂 120 秒」的环节，都会把整轮预算吃光，连一次模型调用都发不出去。
+所以 v3 把三个预算钉死：
+
+| 环节 | 旧 | 新 | 理由 |
+| --- | --- | --- | --- |
+| MCP 建连 / 握手 | `config.timeout`（120s） | `MCP_CONNECT_TIMEOUT = 20.0` | 连不上要快速失败并换下一个候选地址 |
+| 模型单次请求 | 120s | `min(config.timeout, 60.0)` | 60s 没首字，这一轮基本废了，留时间给下一轮 |
+| 模型调用轮数 | `max_llm_calls`（默认 80） | `min(max_llm_calls, 12)`，可用 `AGENT_ENGAGEMENT_MAX_CALLS` 覆盖 | 12 轮 ≈ 3–4 次侦察 + 1 次收尾，能在 2.5 分钟内跑完 |
+
+配套的两处「少做一次往返」：
+
+- MCP 地址不再只试 `mcp.json` 一个：`_mcp_candidates()` 会依次尝试 mcp.json 里的地址和
+  `CTFY_PLATFORM_URL + /api/v1/mcp/`，每个 20s；
+- engagement 跳过 `_enrich_facets()`（那是给逐题 flag 补 category/tags 的，报告制用不上）。
+
+`stderr` 现在按阶段打点（平台的「Agent 日志」标签能看到）：
+
+```
+[mcp] 连接 https://.../api/v1/mcp/（预算 20s）
+[mcp] 已连接，工具 97 个
+[engagement] start GAUNTLET-LITE-001 max_calls=12 tools=9 scope=['http://initech.example'] ...
+[engagement] #1 1.6s tools=2 usage=4158
+[engagement] save_report ok
+[engagement] finalize_report ok
+```
+
 ## 本地怎么验（不烧平台测评）
 
 ```powershell

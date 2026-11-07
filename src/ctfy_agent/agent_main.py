@@ -38,6 +38,7 @@ DEFAULT_MAX_TURNS = 80          # task.json.max_turns 为 null（无预算）时
 DEFAULT_MAX_TOKENS = 8192       # 4096 会在 thinking 块截断、一步即「无动作结束」
 DEFAULT_MAX_CONTEXT = 16000
 DEFAULT_MAX_TOKENS_PER_CHALLENGE = 800000
+MCP_CONNECT_TIMEOUT = 20.0      # MCP 握手/建连的单次预算：平台的整轮时限只有两三分钟
 
 _RESULT_PATH: Path | None = None
 _CHALLENGE_ID = ""
@@ -161,6 +162,32 @@ def _register_signals() -> None:
 
 
 # ---------- MCP 端点解析 ----------
+
+
+def _mcp_candidates(work_dir: Path, platform_url: str, env) -> list:
+    """MCP 端点的候选列表，按可信度排序；去重保序。
+
+    mcp.json 里的地址是平台写好的（最准），但容器网络里也可能连不通（DNS/出网限制），
+    所以永远把 `CTFY_PLATFORM_URL + /api/v1/mcp/` 当兜底候选一起试。
+    """
+    candidates: list = []
+    mcp_json = work_dir / "mcp.json"
+    if mcp_json.is_file():
+        data = _load_json(mcp_json)
+        servers = (data or {}).get("mcpServers") or {}
+        for srv in servers.values():
+            url = (srv or {}).get("url")
+            if url:
+                candidates.append(_expand_env(str(url), env))
+    if platform_url:
+        candidates.append(platform_url.rstrip("/") + "/api/v1/mcp/")
+    seen = set()
+    ordered = []
+    for item in candidates:
+        if item and item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
 
 
 def _resolve_mcp_url(work_dir: Path, platform_url: str, env) -> str | None:
@@ -431,11 +458,11 @@ def run_agent(
         )
         return 0
 
-    # 5) MCP 端点
-    mcp_url = None
+    # 5) MCP 端点（候选列表；连不上就在第 6 步逐个试）
+    candidates: list = []
     if platform is None:
-        mcp_url = _resolve_mcp_url(work_dir, str(env.get("CTFY_PLATFORM_URL") or ""), env)
-        if not mcp_url:
+        candidates = _mcp_candidates(work_dir, str(env.get("CTFY_PLATFORM_URL") or ""), env)
+        if not candidates:
             _write_rollup(
                 result_path,
                 _rollup(challenge_id=challenge_id, stop_reason="halted",
@@ -444,18 +471,29 @@ def run_agent(
             )
             return 0
 
-    config = _build_config(task, work_dir, mcp_url, env)
+    config = _build_config(task, work_dir, candidates[0] if candidates else None, env)
 
-    # 6) 平台连接（或复用注入）
+    # 6) 平台连接（或复用注入）。连接预算必须短：平台给的整轮时间只有两三分钟，
+    #    一个 120s 的 MCP 读超时就会把全部预算耗在「还没开始解题」上。
     if platform is None:
-        platform = CtfyPlatform(mcp_url, token, timeout=config.timeout)
-        try:
-            platform.connect()
-        except Exception as exc:  # noqa: BLE001
+        last_err = None
+        for candidate in candidates:
+            _log(f"[mcp] 连接 {candidate}（预算 {MCP_CONNECT_TIMEOUT:.0f}s）")
+            probe = CtfyPlatform(candidate, token, timeout=MCP_CONNECT_TIMEOUT)
+            try:
+                probe.connect()
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                _log(f"[mcp] 失败 {candidate}: {exc}")
+                continue
+            platform = probe
+            _log(f"[mcp] 已连接，工具 {len(getattr(probe, 'tools', []) or [])} 个")
+            break
+        if platform is None:
             _write_rollup(
                 result_path,
                 _rollup(challenge_id=challenge_id, stop_reason="halted",
-                        writeup=f"MCP connect failed: {exc}"),
+                        writeup=f"MCP connect failed: {last_err}"),
                 announce=True,
             )
             return 0
@@ -473,7 +511,10 @@ def run_agent(
         return 0
     challenge_id = _seed_challenge(store, task, env)  # 回写：兜底 id 与 store/solve/rollup 一致
     _CHALLENGE_ID = challenge_id
-    _enrich_facets(store, platform, challenge_id)
+    # engagement 没有逐题 flag，题型线索（category/tags）没有用处：省掉一次 MCP 往返，
+    # 把预算全留给真正的侦察。
+    if run_mode != "engagement":
+        _enrich_facets(store, platform, challenge_id)
 
     # 8) LLM 工厂（或复用注入）；强制所有角色用 LLM_MODEL（网关会改 model，多模型名是误导）
     if llm_factory is None:
@@ -484,6 +525,8 @@ def run_agent(
                 base_url=config.llm_base_url,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
+                # 首次响应最多等 60s：平台的整轮时限只有两三分钟，120s 一挂就没有第二次机会
+                timeout=min(float(config.timeout), 60.0),
                 debug=config.debug,
             )
 
