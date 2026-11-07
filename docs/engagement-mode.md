@@ -54,8 +54,9 @@ writeup="unsupported run_mode='engagement'"
 | 环节 | 旧 | 新 | 理由 |
 | --- | --- | --- | --- |
 | MCP 建连 / 握手 | `config.timeout`（120s） | `MCP_CONNECT_TIMEOUT = 20.0` | 连不上要快速失败并换下一个候选地址 |
-| 模型单次请求 | 120s | `min(config.timeout, 60.0)` | 60s 没首字，这一轮基本废了，留时间给下一轮 |
-| 模型调用轮数 | `max_llm_calls`（默认 80） | `min(max_llm_calls, 12)`，可用 `AGENT_ENGAGEMENT_MAX_CALLS` 覆盖 | 12 轮 ≈ 3–4 次侦察 + 1 次收尾，能在 2.5 分钟内跑完 |
+| 模型单次请求 | 120s | `min(config.timeout, 40.0)` | 40s 没首字，这一轮基本废了，留时间给下一轮 |
+| 模型调用轮数 | `max_llm_calls`（默认 80） | `min(max_llm_calls, 12)`，可用 `AGENT_ENGAGEMENT_MAX_CALLS` 覆盖 | 12 轮 ≈ 3–4 次侦察 + 1 次收尾 |
+| 墙钟硬闸 | 无 | 进程启动后 `AGENT_ENGAGEMENT_DEADLINE`（默认 100s）到点即停并交兜底报告 | 平台约 150s 就 SIGTERM；自己先收尾，至少留下一份可评分报告 |
 
 配套的两处「少做一次往返」：
 

@@ -22,7 +22,10 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
+import time
+import urllib.parse
 from pathlib import Path
 
 from .config import Config, load
@@ -38,7 +41,7 @@ DEFAULT_MAX_TURNS = 80          # task.json.max_turns 为 null（无预算）时
 DEFAULT_MAX_TOKENS = 8192       # 4096 会在 thinking 块截断、一步即「无动作结束」
 DEFAULT_MAX_CONTEXT = 16000
 DEFAULT_MAX_TOKENS_PER_CHALLENGE = 800000
-MCP_CONNECT_TIMEOUT = 20.0      # MCP 握手/建连的单次预算：平台的整轮时限只有两三分钟
+MCP_CONNECT_TIMEOUT = 15.0      # MCP 握手/建连的单次预算：平台的整轮时限只有两三分钟
 
 _RESULT_PATH: Path | None = None
 _CHALLENGE_ID = ""
@@ -165,6 +168,38 @@ def _register_signals() -> None:
 # ---------- MCP 端点解析 ----------
 
 
+def _prefer_ipv4() -> None:
+    """优先 IPv4：容器若拿到 IPv6 地址但出网路径不通，TLS 握手会卡到超时。
+
+    ctfy.io 挂在 Cloudflare 后面，同时有 A/AAAA；实测日志出现过
+    `_ssl.c:994 The handshake operation timed out`，先排掉 IPv6 这条变量。
+    """
+    import socket as _socket
+
+    if os.environ.get("AGENT_FORCE_IPV4", "1") == "0":
+        return
+    original = _socket.getaddrinfo
+
+    def ipv4_first(host, port, family=0, type=0, proto=0, flags=0):
+        try:
+            infos = original(host, port, _socket.AF_INET, type, proto, flags)
+            if infos:
+                return infos
+        except OSError:
+            pass
+        return original(host, port, family, type, proto, flags)
+
+    _socket.getaddrinfo = ipv4_first
+    _log("[net] 优先 IPv4（AGENT_FORCE_IPV4=0 可关闭）")
+
+
+def _host_of(url: str) -> str:
+    try:
+        return urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
+
+
 def _mcp_candidates(work_dir: Path, platform_url: str, env) -> list:
     """MCP 端点的候选列表，按可信度排序；去重保序。
 
@@ -182,6 +217,14 @@ def _mcp_candidates(work_dir: Path, platform_url: str, env) -> list:
                 candidates.append(_expand_env(str(url), env))
     if platform_url:
         candidates.append(platform_url.rstrip("/") + "/api/v1/mcp/")
+    # 同一套 MCP 有两个域名：ctfy.io（Cloudflare）与 ctfy.tsinghua.edu.cn（校园网直连）。
+    # 容器出网到 Cloudflare 偶尔握手超时，就把另一个域名当备用候选。
+    alternates = {"ctfy.io": "ctfy.tsinghua.edu.cn", "ctfy.tsinghua.edu.cn": "ctfy.io"}
+    for item in list(candidates):
+        host = _host_of(item)
+        other = alternates.get(host)
+        if other:
+            candidates.append(f"https://{other}/api/v1/mcp/")
     seen = set()
     ordered = []
     for item in candidates:
@@ -389,7 +432,8 @@ def run_agent(
     不给就从 env 构建真实客户端、结果路径取 task.json 的 result.path。
     """
     env = dict(env if env is not None else os.environ)
-    global _RESULT_PATH, _CHALLENGE_ID  # noqa: PLW0603 - 信号处理器需要
+    global _RESULT_PATH, _CHALLENGE_ID
+    _prefer_ipv4()  # noqa: PLW0603 - 信号处理器需要
 
     task = _load_json(Path(task_path))
     challenge_id = str((task or {}).get("challenge", {}).get("id") or env.get("CTFY_EVAL_CHALLENGE_ID", ""))
@@ -479,16 +523,21 @@ def run_agent(
     if platform is None:
         last_err = None
         for candidate in candidates:
-            _log(f"[mcp] 连接 {candidate}（预算 {MCP_CONNECT_TIMEOUT:.0f}s）")
+            try:
+                ips = sorted({info[4][0] for info in socket.getaddrinfo(_host_of(candidate), 443, 0, socket.SOCK_STREAM)})
+            except Exception as exc:  # noqa: BLE001 - DNS 失败只做记录
+                ips = [f"dns-fail:{exc}"]
+            _log(f"[mcp] 连接 {candidate} 解析={ips}（预算 {MCP_CONNECT_TIMEOUT:.0f}s）")
+            started = time.time()
             probe = CtfyPlatform(candidate, token, timeout=MCP_CONNECT_TIMEOUT)
             try:
                 probe.connect()
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
-                _log(f"[mcp] 失败 {candidate}: {exc}")
+                _log(f"[mcp] 失败 {candidate}（{time.time() - started:.1f}s）: {exc}")
                 continue
             platform = probe
-            _log(f"[mcp] 已连接，工具 {len(getattr(probe, 'tools', []) or [])} 个")
+            _log(f"[mcp] 已连接（{time.time() - started:.1f}s），工具 {len(getattr(probe, 'tools', []) or [])} 个")
             break
         if platform is None:
             _write_rollup(

@@ -64,6 +64,16 @@ class McpError(RuntimeError):
         self.http_status = http_status
 
 
+def _env_retries(default: int = 0) -> int:
+    """重试次数可调：容器里出网不稳时，重试烧的是墙钟预算（平台只给两三分钟）。"""
+    import os
+
+    try:
+        return max(0, int(os.environ.get("AGENT_MCP_RETRIES") or default))
+    except ValueError:
+        return default
+
+
 def mask_token(token: str) -> str:
     if not token:
         return "(空)"
@@ -280,7 +290,7 @@ class McpHttpClient:
                 "capabilities": {},
                 "clientInfo": CLIENT_INFO,
             },
-            retries=2,
+            retries=_env_retries(),
             idempotent=True,
         )
         if isinstance(result, dict):
@@ -298,7 +308,7 @@ class McpHttpClient:
         cursor = None
         for _ in range(20):
             params = {} if cursor is None else {"cursor": cursor}
-            result = self.request("tools/list", params, retries=2, idempotent=True) or {}
+            result = self.request("tools/list", params, retries=_env_retries(), idempotent=True) or {}
             tools.extend(result.get("tools") or [])
             cursor = result.get("nextCursor")
             if not cursor:
