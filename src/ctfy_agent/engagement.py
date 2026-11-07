@@ -240,6 +240,7 @@ class EngagementRunner:
         nudged = False
         # 墙钟硬闸：平台的解题窗口约 2.5 分钟，到点必须自己收尾，不能让进程被 SIGTERM 杀掉
         t0 = time.time()
+        recovered_400 = False
         deadline = float(os.environ.get("AGENT_ENGAGEMENT_DEADLINE") or 100.0)
         _log(
             f"[engagement] start {challenge_id} max_calls={max_calls} deadline={deadline:.0f}s "
@@ -255,6 +256,13 @@ class EngagementRunner:
             try:
                 resp = llm.chat(messages, tools=specs)
             except LLMError as exc:
+                # 400 多半是把消息切坏了（孤儿 tool 结果 / tool_calls 不配对）：
+                # 折叠到最近几条再试一次，别整轮报废。
+                if getattr(exc, "status", None) == 400 and not recovered_400:
+                    recovered_400 = True
+                    _log(f"[engagement] 400 重试前折叠上下文: {exc}")
+                    EngagementRunner._trim(messages, keep=4)
+                    continue
                 reason = "llm_error"
                 _log(f"[engagement] LLM error after {time.time() - started:.1f}s: {exc}")
                 break
@@ -300,7 +308,7 @@ class EngagementRunner:
                         {
                             "role": "tool",
                             "tool_call_id": call.get("id") or f"call_{calls}",
-                            "content": result[:12000],
+                            "content": result[:6000],
                         }
                     )
                     self.transcript.append({"tool": name, "args": list(args)[:6], "ok": not result.startswith("ERROR")})
@@ -380,19 +388,28 @@ class EngagementRunner:
         return any(text.lstrip().startswith(h) or f"\n{h}" in text[:2000] for h in heads)
 
     @staticmethod
-    def _trim(messages: list[dict], keep: int = 18) -> None:
-        """上下文压缩：留下 system + 首条 brief + 最近 keep 条，其余工具输出折叠成一句摘要。"""
+    def _trim(messages: list[dict], keep: int = 10) -> None:
+        """上下文压缩：留下 system + 首条 brief + 最近 keep 条。
+
+        切点必须落在「说话」的消息上（user，或无 tool_calls 的 assistant）：
+        如果从一条 tool 结果开始，它的 assistant(tool_calls) 父消息就被丢了，
+        上游会直接 400（实测 GAUNTLET 第 6 次调用即此原因）。
+        """
         if len(messages) <= keep + 3:
             return
-        head = messages[:2]
-        body = messages[2:]
-        recent = body[-keep:]
-        dropped = body[:-keep]
+        start = max(2, len(messages) - keep)
+        # 切点不能落在 tool 结果上：那样它的 assistant(tool_calls) 父消息就被丢了，上游 400。
+        # 往前退到这条 tool 的父 assistant（或更早的 user），这样至少保留 keep 条。
+        while start > 2 and messages[start].get("role") == "tool":
+            start -= 1
+        dropped = messages[2:start]
+        if not dropped:
+            return
         folded = {
             "role": "user",
-            "content": f"[上下文压缩] 之前 {len(dropped)} 条工具往返已折叠；关键证据请以 note 工具与最近往返为准。",
+            "content": f"[上下文压缩] 之前 {len(dropped)} 条往返已折叠；关键证据请以 note 工具与最近往返为准。",
         }
-        messages[:] = head + [folded] + recent
+        messages[:] = messages[:2] + [folded] + messages[start:]
 
     def _fallback_report(self, task: dict, reason: str) -> str:
         ch = task.get("challenge") or {}
