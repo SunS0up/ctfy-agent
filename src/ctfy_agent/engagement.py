@@ -238,12 +238,19 @@ class EngagementRunner:
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
         reason = "done"
         nudged = False
+        # 墙钟硬闸：平台的解题窗口约 2.5 分钟，到点必须自己收尾，不能让进程被 SIGTERM 杀掉
+        t0 = time.time()
+        deadline = float(os.environ.get("AGENT_ENGAGEMENT_DEADLINE") or 100.0)
         _log(
-            f"[engagement] start {challenge_id} max_calls={max_calls} tools={len(specs)} "
-            f"scope={scope[:2]} endpoints={[e.get('url') for e in endpoints][:2]}"
+            f"[engagement] start {challenge_id} max_calls={max_calls} deadline={deadline:.0f}s "
+            f"tools={len(specs)} scope={scope[:2]} endpoints={[e.get('url') for e in endpoints][:2]}"
         )
 
-        while calls < max_calls and not self.submitted:
+        while (
+            calls < max_calls
+            and not self.submitted
+            and (time.time() - t0) < deadline
+        ):
             started = time.time()
             try:
                 resp = llm.chat(messages, tools=specs)
@@ -323,10 +330,13 @@ class EngagementRunner:
             reason = "no_more_actions"
             break
 
-        # 没交卷（步数用完 / LLM 出错）：用已有笔记凑一份可交付的报告，别让平台拿到空文件
+        # 没交卷（步数用完 / 撞墙钟 / LLM 出错）：用已有笔记凑一份可交付的报告，别让平台拿到空文件
         if not self.submitted:
             if reason == "done":
-                reason = "step_limit" if calls >= max_calls else "no_more_actions"
+                if (time.time() - t0) >= deadline:
+                    reason = "cut_off"
+                else:
+                    reason = "step_limit" if calls >= max_calls else "no_more_actions"
             if not self.report:
                 self.report = self._fallback_report(task, reason)
             self._save_report(self.report)

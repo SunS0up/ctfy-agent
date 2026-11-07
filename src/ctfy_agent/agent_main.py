@@ -119,6 +119,7 @@ _STOP_MAP = {
     "no_more_actions": "done",
     "step_limit": "max_turns",
     "budget_exhausted": "cut_off",
+    "cut_off": "cut_off",
     "llm_error": "halted",
 }
 
@@ -526,7 +527,7 @@ def run_agent(
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
                 # 首次响应最多等 60s：平台的整轮时限只有两三分钟，120s 一挂就没有第二次机会
-                timeout=min(float(config.timeout), 60.0),
+                timeout=min(float(config.timeout), 40.0),
                 debug=config.debug,
             )
 
