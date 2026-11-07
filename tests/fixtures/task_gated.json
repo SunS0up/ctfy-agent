@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "run_mode": "instance",
+  "challenge": { "id": "gated-01", "name": "Gated Chain", "description": "链式解锁题。" },
+  "competition_id": "arena",
+  "questions": [ { "id": "q1", "prompt": "第一题" } ],
+  "gated_questions": 2,
+  "scope": [],
+  "max_turns": 40,
+  "result": { "path": "/ctfy/work/result.json", "stdout_fallback": false }
+}

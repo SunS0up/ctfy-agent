@@ -1,0 +1,13 @@
+# 镜像只带运行所需（src + config），排除本地开发/测试产物与仓库元数据
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+runs/
+tests/
+docs/
+# 本地工具链与题库缓存：合计 ~68 MB，进上下文只会拖慢构建，镜像里也用不到
+.tools/
+misc-bank/
+.venv/

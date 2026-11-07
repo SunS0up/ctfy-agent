@@ -1,0 +1,84 @@
+# 构建 + 校验 + 推送 agent 镜像到 ghcr.io（全程云端，不碰本地虚拟网卡）
+#
+# ⚠️ 只有手动触发（workflow_dispatch）。自动构建已刻意关掉：
+#    审核按 **digest** 钉死，tag 一移动，运营方批准的和实际跑的就不是同一份字节。
+#    要发新版本时手动 Run workflow，并把 tag 换成新号（如 v2），不要覆盖已提交的 v1。
+#
+# 触发：仓库 Actions → 选本 workflow → Run workflow（手动）
+# 产物：
+#   - ghcr.io/<owner>/ctfy-agent-pub:v1（正式提交用这个，匿名可拉取）
+#   - 一个 ctfy-agent.tar.gz 制品（可在 Actions 运行页下载留档）
+# 前提：仓库是私有/公有均可；推 GHCR 用自带的 GITHUB_TOKEN，无需额外 secret。
+name: build-agent-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "镜像 tag（不带 ghcr.io 前缀）"
+        required: false
+        default: "v1"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # IMAGE 不在这里拼：GHCR 的仓库名只允许小写，GitHub 登录名若含大写（如 SunS0up），
+  # 直接展开成 ghcr.io/SunS0up/... 会让 docker build -t 报 invalid reference format。
+  # 改由下面 "Resolve image name" 一步转小写后写入 GITHUB_ENV。
+  # push 触发时 inputs.tag 为空，用 || 兜底成 v1
+  TAG: ${{ github.event.inputs.tag || 'v1' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image name（GHCR 要求全小写）
+        run: |
+          OWNER_LOWER="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=ghcr.io/${OWNER_LOWER}/ctfy-agent" >> "$GITHUB_ENV"
+          echo "本次镜像名：ghcr.io/${OWNER_LOWER}/ctfy-agent:${TAG}"
+
+      - name: Build image（普通 docker build，让镜像落在本地 daemon，供校验/导出用）
+        run: |
+          docker build \
+            -t "$IMAGE:$TAG" \
+            -t "$IMAGE:latest" \
+            -t "${IMAGE}-pub:$TAG" \
+            -t "${IMAGE}-pub:latest" \
+            .
+
+      - name: 校验：B1 契约（体积 / 目录洁净度 / cwd 无关 / 五条路径全部 exit 0）
+        run: python3 tools/container_check.py --no-build --image "$IMAGE:$TAG"
+
+      - name: 导出 tar 制品
+        run: docker save "$IMAGE:$TAG" | gzip > ctfy-agent.tar.gz
+
+      - name: 上传制品（留档 / 下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctfy-agent
+          path: ctfy-agent.tar.gz
+          retention-days: 30
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 推送到 GHCR
+        run: |
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+          # 同一个镜像再用一个新包名推一份：包可见性只在创建时继承仓库可见性，
+          # 老包在私有仓库时期创建，永远是 private；新包在公开仓库下创建，默认 public。
+          docker push "${IMAGE}-pub:$TAG"
+          docker push "${IMAGE}-pub:latest"

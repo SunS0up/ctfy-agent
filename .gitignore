@@ -1,0 +1,25 @@
+# 凭据
+.env
+.env.*
+!.env.example
+
+# 运行产物
+runs/
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地工具链 / 题库缓存 / 构建产物（不进镜像、也不该进 git）
+.tools/
+misc-bank/
+dist/
+.ref/
+.workbuddy/
+
+# 收进来的第三方模块（可能内嵌凭据，且不属于镜像源码）
+inbox/

@@ -1,0 +1,242 @@
+================================================================================
+TPCTF 2026 智能体赛道 —— 对话交接文本（2026-10-25 11:10 生成）
+用途：新对话首条消息直接整段粘贴，即可接着干。配套细读：E:\ctfy_project\HANDOFF.md
+================================================================================
+
+【0】你是接手的 agent，先看这三句
+--------------------------------------------------------------------------------
+1. 所有结论都来自实测（探针 / 真实平台 / 平台源码逐字读），不要重新推导已验证过的
+   东西——重推一次要烧 20-50 万 token 和稀缺的实例配额。
+2. 只认实验数据，不猜。写数字前用行号、转录或脚本输出核实一遍（用户明确要求）。
+3. 提示词内容类改动必须先单独批准；其它方案先说方案再动手。
+
+
+【1】任务是什么
+--------------------------------------------------------------------------------
+提交物 = 一个容器镜像（不是本地 CLI），在 TPCTF 2026「智能体团队赛道」跑。
+- 合规赛道：Web / Pwn / AI 安全（Web 优先）。
+- 代码约束：纯 stdlib Python，零第三方依赖。
+- 模型：DeepSeek / Pararena 的 OpenAI 兼容接口（当前 config 里 coordinator+web=
+  Kimi-K2.7、rev=Kimi-K3、crypto=DeepSeek-V4-Pro-0813、misc=GLM-Z1-AirX）。
+- 工作目录：E:\ctfy_project（**不是 git 仓库**，改动不可 git 回滚，改前自己备份）。
+
+平台契约（缩到最小）：
+- 平台把只读任务包写进 /ctfy/work/（task.json + README.md + mcp.json）。
+- 我们跑完后把 JSON 写到 /ctfy/work/result.json，然后 exit 0。
+- **stdout 对用户镜像不读**（平台自有镜像才有 legacy 兜底，且它把整段 stdout 当
+  一个 JSON 解析——一行日志就毁掉结果，报错还写成 "produced no JSON rollup"）。
+  所以：日志一律 stderr，stdout 最多只留一行 JSON。
+- 解题计分走运行期 submit（MCP submit_answer），不是赛后判分；result.json 的
+  answers 字段是"平台代交"的便捷通道，solved 字段平台会按自己的提交记录重算。
+
+
+【2】当前状态（2026-10-25 11:10 实测）
+--------------------------------------------------------------------------------
+代码：src/ctfy_agent/ 共 16 个模块，纯 stdlib。
+测试：python tests/smoke.py → **47 passed, 0 failed**（刚跑过，连跑两遍幂等）。
+已完成的能力线（全部只有离线证据，**尚无真实 run 验证**）：
+  A0 题型信息送达   tags/difficulty/solves_count 入库并送达三处提示
+                    （协调者 brief / crew 专家背景 / 单 agent 初始提示）；
+                    list_hints / view_hint 真正放行到模型工具面。
+                    M1 已在真实平台验证（runs/a0_verify.txt）。
+  A1 确定性 Ledger  归一化 args 去重（URL query 排序、body JSON 键排序），
+                    crew 跨 delegate 共享；真实转录回放拦下 18 次重复调用（M3）。
+  A2 输出契约       report 必填 evidence（必须是某次工具输出的逐字连续子串）；
+                    PLAN:/REFLECTION: 由 companion.PlanTrack 有状态消费；
+                    delegate 改 role + objective + done_when。
+已完成的一轮审计（docs/audit-2026-10-25.md）：探针坐实 5 个缺陷，全部修复。
+  #1 非法端口让 normalize_url 抛 ValueError 击穿整个 run（gate/after 在 try 外）
+  #2 delegate 去重键丢 objective（A2 回归，同 role 全部撞同一键）
+  #3 note/report 也被记账，伪造"推进"信号
+  #4 HTTP 缓存跨题不清理（批量跑会脏读）
+  #5 账本摘要注入两次（token 双倍）
+  已补 case_audit_regression（三条反向断言）。
+交付线：零进度。Dockerfile 已有工具链层，**无 ENTRYPOINT、WORKDIR /ctfy、
+无 PYTHONPATH**；无 task.json 解析、无 result.json 写出。
+
+
+【3】待办：三件，其中一件卡住一切
+--------------------------------------------------------------------------------
+★ 硬阻塞（必须先问用户）：注册模型时 LLM_FLAVOR 是 openai 还是 anthropic？
+  - 我们 llm.py:120 只有 OpenAI /chat/completions（stream=False）。
+  - 若平台按 anthropic 发（LLM_BASE_URL 无 /v1 后缀、key 在 ANTHROPIC_*），
+    镜像完全不可用，要另写客户端，+0.5 天。
+  - 这条确认了才能开 B1 的 LLM 接线部分。
+
+A. B1 容器适配层（方案已写完：docs/b1-adapter-plan.md，1 天，零 token 可离线验收）
+   新 src/ctfy_agent/agent_main.py（约 400 行），流程：
+     启动即写一版 provisional result.json（被 kill 也有东西可读）
+     → CTFY_EVAL_DRY_RUN=1 就地收工（写 {schema_version:2, stop_reason:"dry_run"} 再 exit 0）
+     → run_mode != instance 直接拒跑并写 refused
+     → env → Config（LLM_API_KEY 空必须大声失败，禁止回退自有 key）
+     → 解析 $CTFY_WORK_DIR/mcp.json 拿 MCP 端点
+     → 题面入库 → Crew（**必须关掉 stop_instance**）→ 组装 rollup 原子写
+   配套改动：cli.py +12 行（agent 子命令）、Dockerfile +6 行、4 个离线用例 + 5 份 fixture。
+   B1 已核实的 8 条硬事实（实现时别推翻，细节见 docs/b1-adapter-plan.md）：
+     1. docker create 不传命令 → entrypoint 必须镜像自带，且必须绝对路径
+        （相对路径报 relative_entrypoint，dry run 直接拒）；cwd 被强制 /ctfy/work。
+     2. 用户镜像 requires_result_file=True，stdout 不读。
+     3. solved 平台按自己的 submissions 重算 → 必须真提交。
+     4. 只有 exit_<n> 前缀的 stop_reason 才算 aborted。
+     5. **CTFY_MCP_URL 不存在于用户镜像**（只在平台自有 harness）→ 只能读
+        $CTFY_WORK_DIR/mcp.json，或 CTFY_PLATFORM_URL + /api/v1/mcp/。
+     6. 平台网关**非流式也支持** → B2 是健壮性项，不是阻断项。
+     7. CTFY_EVAL_KEEP_INSTANCE=1，实例要活到容器退出后判分 → Crew.solve 默认
+        会 stop 实例（crew.py:534 附近），容器里必须显式关掉。
+     8. 超时后平台仍读 result.json → 启动即写 provisional。
+   容器里会踩的本项目 8 个坑（G1-G8）：
+     不带 config/agent.json → web 角色无 shell；
+     config.py:40 DEFAULTS max_llm_calls=20 会把 60 turn 的题在第 20 次调用掐死；
+     max_tokens=4096 截断 thinking → 一步就"无动作结束"；
+     runs_dir 落到 /ctfy/runs 不进 artifact；
+     crew 会停实例；submit 的 question_id 默认 "flag"；
+     cli.py 大量 print 到 stdout；MCP 地址无来源。
+
+B. A4 批量基线（1 天，约 1.5-2M token，串行，实例配额 1）
+   10 道 web，单题预算压到 150-200k（现在 config/agent.json 是 500k/80 次调用）。
+   产出命中率表 + 失败归因。**A4 同时就是 A0/A1/A2 的第一次真机检验**：
+   先单跑 1 道 easy 确认新契约不崩，重点看 summary["plan"]["missing_steps"]。
+
+C. A3 题型方法卡（2 小时，**仍待用户单独批准**，属提示词工程）
+   tags → 任务序列 / 检查项映射。
+
+已完成的文档：
+  HANDOFF.md                  交接主文档（本 txt 是它的可粘贴版）
+  PROGRESS.md                 耐久 checkpoint，§3.8-§3.11 是 A0/A1/A2 全过程
+  docs/audit-2026-10-25.md    审计 + 5 个缺陷 + 修复落点
+  docs/b1-adapter-plan.md     B1 完整方案 + 可行性审核（8 硬事实 + G1-G8）
+  docs/report-ctfy-rules.md   官网规则调研（CTFY-0001/0002 + 赛事参数）
+
+
+【4】不可重推的硬事实
+--------------------------------------------------------------------------------
+4.1 CTFARENA-035 地面真相（黑盒实测，别再试）
+  - 真实接口只有 3 个：/api/team、/api/company、POST /api/login。
+  - **所有未知路径都返回同一份 215B SPA 兜底页 + 200**，"200"不代表端点存在。
+    /.env、/robots.txt、/api/admin、/.git/HEAD、/graphql 全是 215B。
+  - flag 只能来自 /api/login 成功响应体。
+  - get_challenge 原始字段：difficulty=easy、solves_count=10、
+    tags=[owasp_2025_a07, authentication_failures, weak_password, osint,
+          social_engineering, express, vue3]。
+  - 凭据已穷举 ~1202 次（216 数据词 + 168 组合 + 20 注入 + 10 body 变形 +
+    488 补漏 + 300 经典弱口令），全 401。**别再穷举**；
+    但也**不要断言"凭据路是死路"**——tags 证明方向对，是候选生成覆盖不足。
+  - 两轮 run：run1 34 调用/302,145 token，run2 50 调用/504,953 token，flag 均 0；
+    run2 平台工具调用 0 次（协调者根本没有平台工具）。
+  - 重跑前必须先跑 runs/preflight_035.py（清预算/状态/实例 + 轮转转录），
+    因为该题累计已 504,953 > 500,000 上限。
+
+4.2 平台契约修正（推翻了早期文档三处说法）
+  - stdout 不读（见【1】），不是"写文件 + print 到 stdout 两条都要"。
+  - CTFY_MCP_URL 不存在于用户镜像，只存在于平台自有 harness（eval/external.py）。
+  - 网关非流式可用，"容器里必须改流式"是错的，B2 降级为健壮性项。
+  平台标准真源（已提取成本地文件）：
+    runs/site/standards/CTFY-0001.md  The ctfy agent protocol v2（943 行）
+    runs/site/standards/CTFY-0002.md  The ctfy challenge package v1（1285 行）
+  注意：官网是 SPA，规则不进页面；标准内嵌在前端 assets/registry-*.js，
+  /api/v1/standards 是 404。
+
+4.3 赛事硬参数（GET /api/v1/competitions/{id} 实际下发，比手册更硬）
+  - competition_id = c0d8b4e3dd3b42c095d63d7dfa66431f（TPCTF 2026 Agent Track）
+  - internet_policy = deny → **比赛期容器无外网**，依赖必须全进镜像（我们 stdlib-only，天然合规）
+  - max_instances_per_team_effective = 1 → 起新实例前必须停旧的
+  - tcp_access = tls_sni；freeze = 0；hint 计分 = record
+  - 3 段 session：11/15、11/21、11/22，各 10:00-20:00 CST；段末实例删除 + 900s 宽限
+  - 榜单排序：flags_solved↓ → solved↓ → last_solve_at↑（同分先解出者靠前）
+  - **authoring_enabled = true**：11/21 有三个 2 小时出题窗口 + 人工审核。
+    智能体要"既出题又解题"——**我们目前对出题零支持**，这是被忽略的一大块。
+  - 报名 11-13 20:00 CST 截止，已报 177 队 > 150 上限，大概率有加试。
+  - 赛事规则附件目前为空（attachments: []），手册 §八 说"见附件"→ 判罚细则未公开，需持续盯。
+
+
+【5】代码地图（行号 2026-10-25 校过，改动后要重新校）
+--------------------------------------------------------------------------------
+src/ctfy_agent/crew.py      多智能体：协调者 + web/rev/crypto/misc
+  PLATFORM_SCOPE 32（26 项，含 list_hints/view_hint）
+  _prior_digest 74   _delegate_task 99   COORDINATOR_PROMPT 115
+  COORDINATOR_TOOLS 130（delegate 必填 role/objective/done_when，task 仅兼容）
+  _delegate 257   _role_system 287   solve 326（建账本 391、建 plan 392）
+  _brief 583（输出 难度/已解/tags）
+src/ctfy_agent/solver.py    专家主循环、工具分派、上下文滑窗
+  _ledger_gate 172  _ledger_after 200  _check_report 214  _execute 354
+  solve 486（单 agent，入口清 _http_cache）
+  run_role 727（账本摘要 + 题型背景前置，跨 delegate 共享）
+  _role_context 932  _initial_prompt 950
+src/ctfy_agent/ledger.py    A1 账本 + A2 证据校验
+  normalize_args 121  attempt_key 146  looks_failed 209  claims_discovery 227
+  Ledger 282  verify_evidence 394  digest 454  stats 487
+src/ctfy_agent/companion.py A2 伴生文本
+  parse_companion 62  PlanTrack 82（observe 101 只认账本新增尝试、reminder 136、
+  stalled 143、stall_hint 146、stats 153）
+src/ctfy_agent/state.py     runs/<run>/state.json
+  normalize_tags 87  Challenge 141  from_dict 172  facets 181  upsert 238
+src/ctfy_agent/cli.py       normalize_challenge 65  ensure_challenge_meta 87
+src/ctfy_agent/tools_local.py   http_request / shell / note / report
+src/ctfy_agent/llm.py       chat 104，stream=False 在 114，/chat/completions 在 120
+src/ctfy_agent/platform.py  MCP 客户端；MODEL_TOOLS 55 是单 agent 的真白名单
+src/ctfy_agent/budget.py    三层刹车（单调用 / 单题累计 / 上下文滑窗）
+config/agent.json           max_tokens_per_challenge=500000, max_llm_calls=80
+src/ctfy_agent/config.py    DEFAULTS max_llm_calls=20（40 行）、默认 deepseek 端点（27 行）、
+                            CTFY_MCP_URL 映射（50 行，**该 env 不存在**）、
+                            只读 DEEPSEEK_API_KEY（227 行）
+Dockerfile                  26 行，WORKDIR /ctfy，无 ENTRYPOINT，无 PYTHONPATH
+tests/smoke.py              47 个离线用例，改动后必须保持全绿
+.tools/ctfy-src/            平台源码（契约真源，别去网上找文档）
+
+
+【6】环境与操作（都是踩过的坑）
+--------------------------------------------------------------------------------
+Python：$USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe
+  Bash 里：PY="$USERPROFILE/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/python.exe"
+必须先 export PYTHONIOENCODING=utf-8，否则中文输出乱码/报错。
+PowerShell 5.1 不要用 Tee-Object -Encoding 或 *>，用 | Out-File -FilePath X -Encoding utf8。
+
+单测：  "$PY" tests/smoke.py            → 期望 47 passed, 0 failed
+编译：  "$PY" -m compileall -q src tests
+跑题：  cmd /c run.cmd crew CTFARENA-035 > runs\x.txt 2>&1   放后台 job
+        先确认转录文件存在再判定跑过（runs/default/transcripts/<ID>.jsonl）
+
+限制：本机无 Docker / 无 WSL / 非管理员；web_search 不可用（缺 key）；
+      raw.githubusercontent.com 被 DNS 拦；api.github.com 限流；
+      **git clone 可用**（--filter=blob:none --no-checkout 做元数据克隆再 git show）。
+凭据：.env 里有 CTFY_TOKEN / DEEPSEEK_API_KEY，引用时打码。
+实例：每题配额 1 个；start_instance 必须带 competition_id，否则 403 competition_required。
+转录：runs/default/transcripts/<ID>.jsonl 追加式、跨 run 累积、result 截断到 2000 字符
+      （完整响应体只在模型上下文里，转录拿不回）。统计时防"汇报引用拦截文本"被重复计数。
+
+
+【7】禁忌（别重做，会白烧 token）
+--------------------------------------------------------------------------------
+1. 不要再穷举 035 的凭据（~1202 次全 401）。
+2. 不要断言"凭据路是死路"（tags 证明方向对）。
+3. 不要照搬 Cybench 的自由文本 COMMAND 格式（我们走 OpenAI tool_calls）。
+4. 不要在未经批准时改提示词内容（A3 因此单列）。
+5. 不要用 500k 预算跑批量（10 题 = 5M token）。
+6. 不要重复审计 tags 的发现（PROGRESS §3.4/§3.6 已固化）。
+7. 不要只改 _brief 就以为覆盖了专家（run_role 原来根本不给专家 Challenge 对象，
+   必须走 _role_context）。
+8. 不要相信"200 就是端点存在"（035 上所有未知路径都 200 + 215B 兜底页）。
+
+
+【8】与用户的协作偏好（新对话必读）
+--------------------------------------------------------------------------------
+- 只认实验数据，不猜测；每个断言先用行号 / 转录 / 实测输出自查。
+- 方案先批准再实施；提示词内容改动必须单独批准。
+- 密钥引用打码。
+- 两条线并行：外部资源（Docker、provider key）到位前，先把本地可测的做完。
+- 验尸 / 统计时警惕同一事实的多重计数（拦截文本被汇报引用、echo 重复），先归类再报数。
+- 用户偏爱"先审计再动手"，讨厌在报告里出现没核实过的数字。
+
+
+【9】建议的下一步（问用户这句就够）
+--------------------------------------------------------------------------------
+"LLM_FLAVOR 注册的是 openai 还是 anthropic？确认这条我就按 docs/b1-adapter-plan.md
+ 开 B1；如果先不动 B1，我可以先做 A4 批量基线或 A3 题型方法卡，你定。"
+
+备选（不依赖外部资源，可立即做）：
+  - 把 HANDOFF §6/§7 里三处口径错误彻底改干净（纯文档）。
+  - 给 agent_main.py 先写离线版本（fake MCP + task.json fixture），LLM 接线等
+    LLM_FLAVOR 确认后再补——B1 的 90% 不依赖这个答案。
+  - 补出题（authoring）能力调研：这是目前完全空白且正赛必需的一块。
+
+================================================================================

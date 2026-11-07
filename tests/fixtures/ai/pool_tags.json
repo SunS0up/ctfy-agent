@@ -1,0 +1,406 @@
+{
+  "source": "runs/suite_tags.json + tests/fixtures/web/tag_vocab.json (2026-10-26 收割)",
+  "note": "AI 安全三个目标池的 tag 快照。用例按此断言「池内每个 tag 都被卡片覆盖或显式豁免」，平台新增 tag 时会红。",
+  "pools": {
+    "CTFARENA-AI": {
+      "CTFARENA-040": [
+        "owasp_2026_asi03",
+        "agentic_ai",
+        "identity_abuse",
+        "credential_leak",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-042": [
+        "owasp_2026_asi05",
+        "agentic_ai",
+        "unexpected_code_execution",
+        "sandbox_escape",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-043": [
+        "owasp_2026_asi06",
+        "agentic_ai",
+        "memory_poisoning",
+        "rag",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-044": [
+        "owasp_2026_asi07",
+        "agentic_ai",
+        "inter_agent",
+        "signature_bypass",
+        "jwt_none",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-045": [
+        "owasp_2026_asi08",
+        "agentic_ai",
+        "cascading_failure",
+        "fail_open",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-047": [
+        "owasp_2026_asi10",
+        "agentic_ai",
+        "rogue_agent",
+        "persistence",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-038": [
+        "owasp_2026_asi01",
+        "agentic_ai",
+        "prompt_injection",
+        "agent_goal_hijack",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-039": [
+        "owasp_2026_asi02",
+        "agentic_ai",
+        "tool_misuse",
+        "excessive_agency",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-041": [
+        "owasp_2026_asi04",
+        "agentic_ai",
+        "supply_chain",
+        "untrusted_plugins",
+        "mcp",
+        "flask",
+        "python"
+      ],
+      "CTFARENA-046": [
+        "owasp_2026_asi09",
+        "agentic_ai",
+        "trust_exploitation",
+        "auto_approval",
+        "flask",
+        "python"
+      ]
+    },
+    "AGENTBENCH": {
+      "AGENTBENCH-001": [
+        "owasp_2026_asi01",
+        "agentic_ai",
+        "prompt_injection",
+        "i18n",
+        "flask",
+        "python"
+      ],
+      "AGENTBENCH-002": [
+        "owasp_2026_asi01",
+        "agentic_ai",
+        "prompt_injection",
+        "prompt_injection_bypass",
+        "i18n",
+        "flask",
+        "python"
+      ],
+      "AGENTBENCH-003": [
+        "owasp_2026_asi01",
+        "agentic_ai",
+        "prompt_injection",
+        "indirect_prompt_injection",
+        "excessive_agency",
+        "flask",
+        "python"
+      ],
+      "AGENTBENCH-004": [
+        "owasp_2026_asi01",
+        "agentic_ai",
+        "honeypot",
+        "agent_detection",
+        "prompt_injection_indirect",
+        "tarpit",
+        "deception",
+        "flask",
+        "python"
+      ],
+      "AGENTBENCH-005": [
+        "owasp_2026_asi01",
+        "agentic_ai",
+        "streaming",
+        "server_sent_events",
+        "output_filtering",
+        "flask",
+        "python"
+      ]
+    },
+    "AGENT-DEFENSE": {
+      "AGENT-DEFENSE-001": [
+        "agent_defense",
+        "prompt_injection_indirect",
+        "html_honeypot",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-002": [
+        "agent_defense",
+        "decoy_flag",
+        "robots_trap",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-003": [
+        "agent_defense",
+        "bot_detection",
+        "browser_fingerprint",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-004": [
+        "agent_defense",
+        "context_exhaustion",
+        "context_bomb",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-005": [
+        "agent_defense",
+        "llm_capability_gap",
+        "jailbreak",
+        "prompt_injection_direct",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-006": [
+        "agent_defense",
+        "prompt_injection_indirect",
+        "hidden_dom",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-007": [
+        "agent_defense",
+        "prompt_injection_indirect",
+        "markdown_admonition",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-008": [
+        "agent_defense",
+        "prompt_injection_indirect",
+        "alt_text_injection",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-009": [
+        "agent_defense",
+        "prompt_injection_indirect",
+        "tool_output_poisoning",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-010": [
+        "agent_defense",
+        "decoy_flag",
+        "git_history_decoy",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-011": [
+        "agent_defense",
+        "decoy_flag",
+        "poisoned_well",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-012": [
+        "agent_defense",
+        "bot_detection",
+        "timing_debounce",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-013": [
+        "agent_defense",
+        "bot_detection",
+        "canvas_fingerprint",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-014": [
+        "agent_defense",
+        "context_exhaustion",
+        "spider_trap",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-015": [
+        "agent_defense",
+        "context_exhaustion",
+        "verbose_error",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-016": [
+        "agent_defense",
+        "llm_capability_gap",
+        "char_count",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-017": [
+        "agent_defense",
+        "authority_spoofing",
+        "prompt_injection_indirect",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-018": [
+        "agent_defense",
+        "authority_spoofing",
+        "fake_console",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-019": [
+        "agent_defense",
+        "output_layer_deception",
+        "ansi_hide",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-020": [
+        "agent_defense",
+        "output_layer_deception",
+        "unicode_zero_width",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-021": [
+        "agent_defense",
+        "multi_turn_deception",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-022": [
+        "agent_defense",
+        "tool_hijacking",
+        "next_action_injection",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-023": [
+        "agent_defense",
+        "cost_amplification",
+        "context_bomb",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-024": [
+        "agent_defense",
+        "memory_poisoning",
+        "recall_injection",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-025": [
+        "agent_defense",
+        "credential_phishing",
+        "fake_login",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-026": [
+        "agent_defense",
+        "recursive_dos",
+        "svg_bomb",
+        "context_bomb",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-027": [
+        "agent_defense",
+        "scope_confusion",
+        "runtime_spoof",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-028": [
+        "agent_defense",
+        "format_injection",
+        "encoding_strip",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-029": [
+        "agent_defense",
+        "ephemeral_state",
+        "race_disappears",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-030": [
+        "agent_defense",
+        "vision_only",
+        "image_encoding",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-031": [
+        "agent_defense",
+        "quota_window",
+        "decoy_envelope",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-032": [
+        "agent_defense",
+        "log_injection",
+        "authority_spoof",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-033": [
+        "agent_defense",
+        "prompt_injection_indirect",
+        "json_payload",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-034": [
+        "agent_defense",
+        "redirect_loop",
+        "link_rot",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-035": [
+        "agent_defense",
+        "fanout_storm",
+        "tool_budget",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-036": [
+        "agent_defense",
+        "clock_window",
+        "date_header",
+        "flask",
+        "python"
+      ],
+      "AGENT-DEFENSE-037": [
+        "agent_defense",
+        "honeypot",
+        "prompt_injection_indirect",
+        "goal_hijack",
+        "ansi_hide",
+        "canary_callback",
+        "tarpit",
+        "context_exhaustion",
+        "behavioral_fingerprint",
+        "flask",
+        "python"
+      ]
+    }
+  }
+}

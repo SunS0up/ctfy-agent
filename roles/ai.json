@@ -1,0 +1,23 @@
+{
+  "ai": {
+    "model": "Kimi-K2.7",
+    "max_steps": 12,
+    "allow_shell": false,
+    "max_tokens": 4096,
+    "platform": [
+      "get_challenge",
+      "list_challenge_attachments",
+      "download_challenge_attachment",
+      "list_hints",
+      "view_hint",
+      "start_instance",
+      "list_instance_attachments",
+      "download_instance_attachment",
+      "verify_answer"
+    ],
+    "local": [
+      "http_request",
+      "chat"
+    ]
+  }
+}
