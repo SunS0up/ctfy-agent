@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .config import Config, load
 from .crew import Crew
+from .engagement import EngagementRunner
 from .llm import DeepSeekLLM
 from .platform import CtfyPlatform
 from .state import Store
@@ -310,7 +311,8 @@ def _final_rollup(store: Store, challenge_id: str, summary: dict, config: Config
     solved: list = []
     if challenge is not None and challenge.flag_value:
         answers[qid] = challenge.flag_value  # flag_value 只在平台校验通过后记录
-    if summary.get("submitted"):
+    # engagement 没有逐题 flag：solved 必须留空，否则平台会把它当成一个假的解题记录
+    if summary.get("submitted") and not summary.get("report"):
         solved = [qid]
 
     usage = summary.get("usage") or {}
@@ -322,19 +324,22 @@ def _final_rollup(store: Store, challenge_id: str, summary: dict, config: Config
         f"tokens={summary.get('tokens_spent', 0)} "
         f"ledger={json.dumps(ledger, ensure_ascii=False)}"
     )
+    if summary.get("writeup"):
+        # engagement：writeup 就是交付的报告正文，别被统计行挤掉
+        writeup = str(summary["writeup"])
 
     return _rollup(
         challenge_id=challenge_id,
         instance_id=(challenge.instance_id if challenge is not None else ""),
         answers=answers,
-        solved=solved,
-        fully_solved=bool(summary.get("submitted")),
+        solved=[] if summary.get("report") else solved,
+        fully_solved=False if summary.get("report") else bool(summary.get("submitted")),
         turns=int(budget.get("calls") or summary.get("steps") or 0),
-        tool_calls_made=_count_tool_calls(summary.get("transcript")),
+        tool_calls_made=int(summary.get("tool_calls") or _count_tool_calls(summary.get("transcript"))),
         input_tokens=int(usage.get("prompt_tokens") or 0),
         output_tokens=int(usage.get("completion_tokens") or 0),
         stop_reason=_map_stop_reason(reason),
-        writeup=writeup[:2000],
+        writeup=writeup[:6000],
     )
 
 
@@ -394,13 +399,13 @@ def run_agent(
         )
         return 0
 
-    # 3) 只支持 instance 模式
+    # 3) 支持的 run_mode：instance（逐题 flag）与 engagement（GAUNTLET 报告）
     run_mode = str(task.get("run_mode") or "")
-    if run_mode != "instance":
+    if run_mode not in ("instance", "engagement"):
         _write_rollup(
             result_path,
             _rollup(challenge_id=challenge_id, stop_reason="refused",
-                    writeup=f"unsupported run_mode={run_mode!r}"),
+                    writeup=f"unsupported run_mode={run_mode!r} (supported: instance, engagement)"),
             announce=True,
         )
         return 0
@@ -482,14 +487,18 @@ def run_agent(
                 debug=config.debug,
             )
 
-    # 9) 跑 Crew
+    # 9) 跑对应模式的执行器：instance → Crew（逐题 flag）；engagement → EngagementRunner（报告）
     try:
-        crew = Crew(config, platform, store, llm_factory)
-        summary = crew.solve(challenge_id)
+        if run_mode == "engagement":
+            summary = EngagementRunner(config, platform, store, llm_factory).run(task, challenge_id)
+        else:
+            crew = Crew(config, platform, store, llm_factory)
+            summary = crew.solve(challenge_id)
     except Exception as exc:  # noqa: BLE001 - 任何解题异常都不许毁掉 result.json
         _write_rollup(
             result_path,
-            _rollup(challenge_id=challenge_id, stop_reason="halted", writeup=f"crew failed: {exc}"),
+            _rollup(challenge_id=challenge_id, stop_reason="halted",
+                    writeup=f"{run_mode} runner failed: {exc}"),
             announce=True,
         )
         return 0
